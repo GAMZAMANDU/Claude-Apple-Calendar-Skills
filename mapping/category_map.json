@@ -1,0 +1,19 @@
+{
+  "_comment": "키워드 -> 실제 캘린더/리스트 이름 힌트. 여기 없는 캘린더/리스트는 list_calendars.sh / list_reminder_lists.sh로 실제 목록 조회해서 매칭. 이름은 이 Mac에 실제로 존재하는 것과 정확히 일치해야 함.",
+  "calendars": {
+    "회의": "Work",
+    "미팅": "Work",
+    "업무": "Work",
+    "출장": "Work",
+    "가족": "Family",
+    "병원": "Personal",
+    "약속": "Personal",
+    "생일": "Birthdays"
+  },
+  "reminderLists": {
+    "장보기": "Shopping",
+    "할일": "Reminders",
+    "집안일": "Home",
+    "업무": "Work"
+  }
+}
