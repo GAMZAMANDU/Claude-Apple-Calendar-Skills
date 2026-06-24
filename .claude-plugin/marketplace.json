@@ -1,0 +1,14 @@
+{
+  "name": "apple-calendar-skills",
+  "description": "macOS Calendar.app/Reminders.app를 자연어로 조작하는 Claude Code 스킬 모음",
+  "owner": {
+    "name": "GAMZAMANDU"
+  },
+  "plugins": [
+    {
+      "name": "apple-calendar",
+      "source": "./",
+      "description": "Create, search, update, and delete events in macOS Calendar.app and reminders in Reminders.app from natural-language requests (Korean/English)."
+    }
+  ]
+}

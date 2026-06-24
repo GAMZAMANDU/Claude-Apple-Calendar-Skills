@@ -1,0 +1,10 @@
+{
+  "name": "apple-calendar",
+  "description": "Create, search, update, and delete events in macOS Calendar.app and reminders in Reminders.app from natural-language requests (Korean/English).",
+  "version": "1.0.0",
+  "author": {
+    "name": "GAMZAMANDU"
+  },
+  "homepage": "https://github.com/GAMZAMANDU/Claude-Apple-Calendar-Skills",
+  "repository": "https://github.com/GAMZAMANDU/Claude-Apple-Calendar-Skills"
+}
