@@ -1,68 +1,68 @@
 # Apple Calendar & Reminders Skill
 
-Claude Code용 스킬. 자연어(한/영)로 macOS **Calendar.app**(일정)과 **Reminders.app**(미리알림)을 조작한다. "회의 일정 등록해줘", "미리알림 추가해줘" 같은 요청을 받아 실제 캘린더/리스트에 생성·조회·수정·삭제·이동까지 처리한다.
+A Claude Code skill that controls macOS **Calendar.app** (events) and **Reminders.app** (reminders) from natural-language requests, in Korean or English. Ask it to "schedule a meeting" or "회의 일정 등록해줘" and it creates, searches, updates, deletes, or moves real entries in your calendars/lists.
 
-자세한 동작 규칙(카테고리 판단, 실행 전 확인 흐름, 데이터 모델)은 [`SKILL.md`](./SKILL.md) 참고. 이 파일은 사람이 설치/사용하기 위한 안내다.
+For the detailed behavior rules (category resolution, the confirm-before-execute flow, the underlying data model), see [`SKILL.md`](./SKILL.md). This file is the human-facing install/usage guide.
 
-## 설치
+## Install
 
-이 저장소는 Claude Code [플러그인](https://code.claude.com/docs/en/plugins)이다(`.claude-plugin/plugin.json` + `marketplace.json` 포함). 두 가지 설치 방법이 있다.
+This repo is a Claude Code [plugin](https://code.claude.com/docs/en/plugins) (it ships `.claude-plugin/plugin.json` + `marketplace.json`). Two ways to install:
 
-### 방법 1: 플러그인 마켓플레이스로 설치 (다른 사람에게 공유할 때, 권장)
+### Option 1: Via the plugin marketplace (recommended for sharing)
 
-Claude Code 안에서:
+Inside Claude Code:
 
 ```
 /plugin marketplace add GAMZAMANDU/Claude-Apple-Calendar-Skills
 /plugin install apple-calendar@apple-calendar-skills
 ```
 
-### 방법 2: 내 Mac에 직접 설치 (마켓플레이스 등록 없이 바로 쓰기)
+### Option 2: Directly on your own Mac (no marketplace registration needed)
 
 ```bash
 git clone https://github.com/GAMZAMANDU/Claude-Apple-Calendar-Skills.git ~/Apple-Calender_Skills
 ln -s ~/Apple-Calender_Skills ~/.claude/skills/apple-calendar
 ```
 
-`~/.claude/skills/` 아래 디렉터리에 `.claude-plugin/plugin.json`이 있으면 Claude Code가 이를 자동으로 "skills-dir 플러그인"(`apple-calendar@skills-dir`)으로 인식해 로드한다. 마켓플레이스 등록/설치 단계가 필요 없다.
+When a directory under `~/.claude/skills/` contains a `.claude-plugin/plugin.json`, Claude Code automatically recognizes and loads it as a "skills-dir plugin" (`apple-calendar@skills-dir`) — no marketplace add/install step needed.
 
-두 방법 모두 적용 후 Claude Code를 재시작(새 세션 시작)해야 스킬이 로드된다. 처음 스크립트가 실행될 때 macOS가 Calendar/Reminders 접근 권한을 묻는다 — 허용해야 동작한다(시스템 설정 > 개인정보 보호 및 보안 > 캘린더 / 미리 알림).
+Either way, restart Claude Code (start a new session) for the skill to load. The first time a script runs, macOS will prompt for Calendar/Reminders access — you need to allow it (System Settings > Privacy & Security > Calendars / Reminders).
 
-## 사용 예시
+## Usage examples
 
 ```
-"내일 3시에 팀 회의 일정 등록해줘"
-"이번 주말 장보기 미리알림 추가해줘"
-"오늘 일정 뭐있어?"
-"아까 등록한 회의 7시로 옮겨줘"
+"Schedule a team meeting tomorrow at 3pm"
+"Add a reminder to buy groceries this weekend"
+"What's on my calendar today?"
+"Move that meeting I just created to 7pm"
 ```
 
-생성/수정/삭제 요청은 실행 전에 항상 계획(제목/시간/캘린더/위치 등)을 보여주고 확인을 받은 뒤 실행한다. 조회/검색은 바로 실행된다.
+Create/update/delete requests always show a plan (title/time/calendar/location, etc.) and wait for confirmation before running. Read/search requests run immediately.
 
-## 동작 원리
+## How it works
 
-`osascript -l JavaScript` (JXA)로 두 앱을 직접 제어한다. 순수 AppleScript 대신 JXA를 쓴 이유는 날짜 리터럴이 시스템 로캘에 의존하지 않게 하기 위함(표준 JS `Date` 사용).
+It drives both apps directly via `osascript -l JavaScript` (JXA). JXA is used instead of plain AppleScript because date literals in AppleScript depend on the system locale; JXA uses the standard JS `Date` object instead, which avoids that class of bug.
 
-| 스크립트 | 역할 |
+| Script | Role |
 |---|---|
-| `scripts/list_calendars.js` | 실제 존재하는 캘린더 목록 조회 |
-| `scripts/list_reminder_lists.js` | 실제 존재하는 미리알림 리스트 목록 조회 |
-| `scripts/find_events.js` | 날짜범위/키워드로 이벤트 검색 |
-| `scripts/find_reminders.js` | 날짜범위/키워드로 미리알림 검색 |
-| `scripts/create_event.js` | 이벤트 생성 (종일 일정 지원) |
-| `scripts/create_reminder.js` | 미리알림 생성 |
-| `scripts/update_event.js` / `update_reminder.js` | 기존 항목 수정 |
-| `scripts/delete_event.js` / `delete_reminder.js` | 삭제 |
-| `scripts/move_event.js` | 이벤트를 다른 캘린더로 이동 |
+| `scripts/list_calendars.js` | List calendars that actually exist |
+| `scripts/list_reminder_lists.js` | List reminder lists that actually exist |
+| `scripts/find_events.js` | Search events by date range/keyword |
+| `scripts/find_reminders.js` | Search reminders by date range/keyword |
+| `scripts/create_event.js` | Create an event (supports all-day) |
+| `scripts/create_reminder.js` | Create a reminder |
+| `scripts/update_event.js` / `update_reminder.js` | Update an existing item |
+| `scripts/delete_event.js` / `delete_reminder.js` | Delete an item |
+| `scripts/move_event.js` | Move an event to a different calendar |
 
-각 스크립트는 `chmod +x` 된 실행 파일이라 직접 호출 가능: `./scripts/list_calendars.js`. 인자/반환 형식은 `SKILL.md` 5번 항목에 표로 정리돼 있다.
+Each script is an executable file (`chmod +x` already applied) and can be called directly: `./scripts/list_calendars.js`. Argument/return formats are tabulated in `SKILL.md` section 5.
 
-## 카테고리 매핑
+## Category mapping
 
-`mapping/category_map.json`에 키워드 → 캘린더/리스트 이름 힌트를 등록해두면 더 정확하게 분류한다. 설치 직후엔 예시 값이라 본인 환경의 실제 캘린더/리스트 이름으로 바꿔주는 게 좋다(없어도 동작은 한다 — 매핑이 없으면 실제 목록 조회 + 추론으로 대체).
+`mapping/category_map.json` holds keyword → calendar/list name hints for more accurate classification. Right after install it only has example values — update it with the calendar/list names that actually exist in your environment (it still works without this, falling back to a live lookup + inference).
 
-## 알려진 한계
+## Known limitations
 
-- **계정 지정 불가**: Calendar.app의 스크립팅 인터페이스엔 account(iCloud 등) 개념이 없어서, 새 캘린더는 항상 기본 위치(보통 로컬)에 생성된다. 특정 계정으로 옮기려면 Calendar.app GUI에서 해당 계정 섹션에 직접 캘린더를 만든 뒤 `move_event.js`로 이벤트를 옮기는 방식으로 우회해야 한다(자세한 내용은 `SKILL.md` 8번 항목).
-- **`move_event.js`는 uid가 바뀐다**: Calendar.app의 `move` 커맨드가 event 클래스에 실제로는 구현돼 있지 않아서, 목적지 캘린더에 동일 속성으로 재생성 후 원본을 삭제하는 방식으로 동작한다.
-- macOS 전용. Calendar.app / Reminders.app이 설치된 환경에서만 동작한다.
+- **Can't target a specific account**: Calendar.app's scripting interface has no concept of an account (iCloud, etc.), so new calendars always get created in the default location (usually local). To move one to a specific account, create it manually in that account's section in Calendar.app's GUI, then use `move_event.js` to move events into it (see `SKILL.md` section 8 for details).
+- **`move_event.js` changes the uid**: Calendar.app's `move` command isn't actually implemented for the event class, so this works by recreating the event in the destination calendar and deleting the original.
+- macOS only. Requires Calendar.app / Reminders.app to be installed.

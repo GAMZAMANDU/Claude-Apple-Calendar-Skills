@@ -5,94 +5,99 @@ description: Create, search, update, and delete events in macOS Calendar.app and
 
 # Apple Calendar & Reminders Skill
 
-macOS의 **Calendar.app**(일정)과 **Reminders.app**(미리알림/할일)을 자연어 요청으로 조작하는 스킬. `osascript -l JavaScript`(JXA)로 두 앱을 제어한다. AppleScript 순수 문법은 날짜 리터럴이 시스템 로캘에 의존해 파싱 버그가 잦으므로 사용하지 않는다 — JXA는 표준 JS `Date` 객체를 쓰므로 안전하다.
+A skill for controlling macOS **Calendar.app** (events) and **Reminders.app** (reminders/to-dos) from natural-language requests. It drives both apps via `osascript -l JavaScript` (JXA). Pure AppleScript syntax is avoided because its date literals depend on the system locale and are a frequent source of parsing bugs — JXA uses the standard JS `Date` object instead, which is safe.
 
-## 1. Calendar vs Reminders 선택 기준
+## 0. Response language
 
-사용자 요청을 보고 둘 중 하나로 분류한다.
+Always respond to the user in the language they used in their request — mirror it, don't default to Korean or English. Plan summaries, confirmations, results, and error messages should all match the requester's language.
 
-| 신호 | 대상 |
+## 1. Calendar vs Reminders: which one to use
+
+Classify each request into one of the two based on these signals:
+
+| Signal | Target |
 |---|---|
-| 특정 시작/종료 시각이 있는 약속, 회의, 미팅 ("3시에", "2시~3시", "내일 오전 회의") | **Calendar event** |
-| 마감일/할 일 위주, 시각이 없거나 "그 시간에 알려줘"가 핵심 ("쓰레기 버리기", "보고서 제출", "장보기 리마인드") | **Reminders** |
-| "미리알림"이라는 단어가 명시적으로 쓰임 | **Reminders** |
-| 모호한 경우 | 기본은 Calendar event. 단, 지속시간이 없고 단일 행동(할 일)이면 Reminders로 판단 |
+| A specific start/end time exists (a meeting, an appointment — "at 3pm", "2-3pm", "tomorrow morning's meeting") | **Calendar event** |
+| Deadline/task-oriented, no specific time, or the core need is "remind me at that time" ("take out the trash", "submit the report", "grocery reminder") | **Reminders** |
+| The word "reminder" (or "미리알림") is used explicitly | **Reminders** |
+| Ambiguous | Default to Calendar event. If there's no duration and it's a single action/task, treat it as Reminders instead |
 
-## 2. 데이터 모델 (macOS `sdef`로 실측, 추측 금지)
+## 2. Data model (verified via macOS `sdef` — do not guess)
 
-### Calendar.app `event` (calendar 앱 dictionary 기준)
-- `summary` (제목), `start date`, `end date`, `allday event`
-- `location`, `description`(=notes), `url`, `status`
-- `uid` (읽기 전용, 식별자 — update/delete 시 반드시 이걸로 타겟팅)
-- 소속 `calendar` — **이것이 카테고리다.** event 자체에 별도 category 필드는 없음.
-- alarm (`display alarm` 등): `trigger interval`(분 단위 정수, **음수=이벤트 전, 양수=이벤트 후**)
+### Calendar.app `event` (per the Calendar app's scripting dictionary)
+- `summary` (title), `start date`, `end date`, `allday event`
+- `location`, `description` (=notes), `url`, `status`
+- `uid` (read-only identifier — always target update/delete by this)
+- the containing `calendar` — **this is the category.** There is no separate category field on the event itself.
+- alarms (`display alarm`, etc.): `trigger interval` (integer minutes, **negative = before the event, positive = after**)
 
 ### Reminders.app `reminder`
-- `name`, `body`(=notes)
-- `due date`(날짜+시간), `allday due date`(날짜만), `remind me date`(실제 알림이 뜨는 시각 — "미리알림"의 핵심 필드)
-- `priority` (정수: 0=없음, 1–4=high, 5=medium, 6–9=low)
+- `name`, `body` (=notes)
+- `due date` (date+time), `allday due date` (date only), `remind me date` (the actual time the notification fires — the key field for "reminders")
+- `priority` (integer: 0=none, 1–4=high, 5=medium, 6–9=low)
 - `flagged`, `completed`
-- 소속 `container` = `list` — **이것이 카테고리다.**
-- `id` (읽기 전용 식별자 — update/delete 시 반드시 이걸로 타겟팅)
+- the containing `container` = `list` — **this is the category.**
+- `id` (read-only identifier — always target update/delete by this)
 
-주의: event엔 priority 없음, reminder엔 카테고리 전용 필드 없음(list가 곧 카테고리). 둘 다 "category"라는 이름의 필드는 존재하지 않는다 — 헷갈리지 말 것.
+Note: events have no `priority` field, and reminders have no dedicated category field (the list *is* the category). Neither class has a field literally named "category" — don't get confused by this.
 
-## 3. 카테고리(캘린더/리스트) 결정 로직
+## 3. Category (calendar/list) resolution logic
 
-1. `scripts/list_calendars.sh` 또는 `scripts/list_reminder_lists.sh`로 **실제 이 Mac에 존재하는** 캘린더/리스트 이름을 가져온다. 존재하지 않는 캘린더를 지어내지 않는다.
-2. `mapping/category_map.json`의 키워드 힌트를 참고해 가장 그럴듯한 캘린더/리스트를 고른다.
-3. 매핑에 없거나 모호하면, 가능성 높은 후보를 골라 4단계 plan에 포함시키고 사용자가 확인 단계에서 정정할 수 있게 한다. 추측만으로 조용히 진행하지 않는다.
+1. Use `scripts/list_calendars.js` or `scripts/list_reminder_lists.js` to fetch the calendars/lists that **actually exist on this Mac**. Never invent a calendar that doesn't exist.
+2. Use the keyword hints in `mapping/category_map.json` to pick the most likely calendar/list.
+3. If there's no mapping or it's ambiguous, pick the most plausible candidate, include it in the step-4 plan, and let the user correct it during confirmation. Never proceed silently on a guess alone.
+4. If none of the existing calendars/lists fit and a **new one must be created**, give it an identifiable, consistent name — avoid vague names like "temp", "TEST", or a single letter; use a name that conveys its purpose, and follow the same naming pattern as any existing calendars/lists with a similar purpose. Creating a new calendar/list also goes through the step-4 confirmation flow (include the proposed name in the plan and get confirmation before creating it).
 
-## 4. 실행 흐름
+## 4. Execution flow
 
-- **생성 / 수정 / 삭제**: 항상 아래 형식으로 plan을 먼저 보여주고 사용자 확인을 받은 뒤에만 스크립트를 실행한다.
+- **Create / update / delete**: always show a plan in the format below first and only run the script after the user confirms. Render the plan in the user's language (see [Section 0](#0-response-language)) — the example below is illustrative, not a fixed template:
   ```
-  [Calendar] 회의 일정 등록
-  제목: 팀 주간회의
-  시간: 2026-06-26 (금) 15:00–16:00
-  캘린더: Work
-  위치: (없음)
-  알림: 10분 전
-  → 등록할까요?
+  [Calendar] Register meeting
+  Title: Weekly team sync
+  Time: 2026-06-26 (Fri) 15:00–16:00
+  Calendar: Work
+  Location: (none)
+  Alarm: 10 min before
+  → Create this?
   ```
-- **조회 / 검색**: 비파괴적이므로 확인 없이 즉시 실행하고 결과를 보여준다.
-- **수정/삭제**는 먼저 `find_events.sh` / `find_reminders.sh`로 대상을 검색해 `uid`/`id`를 특정한 뒤, 그 식별자로 update/delete를 호출한다. 제목만으로 매칭해 동명 이벤트를 잘못 건드리지 않는다.
+- **Read / search**: non-destructive, so run immediately and show the results without confirmation.
+- **Update/delete** first search with `find_events.js` / `find_reminders.js` to pin down the target's `uid`/`id`, then call update/delete with that identifier. Never match on title alone — you could hit the wrong event with the same name.
 
-## 5. 스크립트 인터페이스 (구현 완료)
+## 5. Script interface (implemented)
 
-모든 스크립트는 `scripts/`에 위치한 실행 가능한 JXA 파일(`#!/usr/bin/osascript -l JavaScript` 셔뱅, `chmod +x` 완료). 직접 실행 가능: `./scripts/list_calendars.js`. argv로 `--key value` 형태 인자를 받고 stdout으로 JSON을 반환한다.
+All scripts live in `scripts/` as executable JXA files (`#!/usr/bin/osascript -l JavaScript` shebang, already `chmod +x`). They can be run directly: `./scripts/list_calendars.js`. They take `--key value` style arguments via argv and return JSON on stdout.
 
-| 스크립트 | 인자 | 반환 |
+| Script | Arguments | Returns |
 |---|---|---|
-| `list_calendars.js` | (없음) | `[{name, color}]` |
-| `list_reminder_lists.js` | (없음) | `[{name, color}]` |
-| `find_events.js` | `--from`, `--to` (ISO8601), `--calendar`(옵션), `--query`(옵션, 제목 키워드) | `[{uid, summary, start, end, calendar, location}]` |
-| `find_reminders.js` | `--from`, `--to`(옵션), `--list`(옵션), `--query`(옵션), `--include-completed`(옵션) | `[{id, name, due, remindAt, list, completed, priority}]` |
+| `list_calendars.js` | (none) | `[{name, color}]` |
+| `list_reminder_lists.js` | (none) | `[{name, color}]` |
+| `find_events.js` | `--from`, `--to` (ISO8601), `--calendar` (optional), `--query` (optional, title keyword) | `[{uid, summary, start, end, calendar, location}]` |
+| `find_reminders.js` | `--from`, `--to` (optional), `--list` (optional), `--query` (optional), `--include-completed` (optional) | `[{id, name, due, remindAt, list, completed, priority}]` |
 | `create_event.js` | `--title --start --end --calendar [--location] [--notes] [--alarm-minutes-before] [--allday]` | `{uid}` |
 | `create_reminder.js` | `--name --list [--due] [--remind-at] [--notes] [--priority]` | `{id}` |
-| `update_event.js` | `--uid --calendar [필드별 옵션]` | `{ok}` |
-| `update_reminder.js` | `--id [필드별 옵션]` | `{ok}` |
+| `update_event.js` | `--uid --calendar [field options]` | `{ok}` |
+| `update_reminder.js` | `--id [field options]` | `{ok}` |
 | `delete_event.js` | `--uid --calendar` | `{ok}` |
 | `delete_reminder.js` | `--id` | `{ok}` |
-| `move_event.js` | `--uid --from-calendar --to-calendar` | `{uid}` (새 uid — 원본은 재생성 후 삭제됨, 아래 참고) |
+| `move_event.js` | `--uid --from-calendar --to-calendar` | `{uid}` (a *new* uid — see note below) |
 
-`move_event.js` 주의: Calendar.app의 표준 `move` 커맨드는 event 클래스에 실제로 구현 안 돼 있어 항상 에러난다(-10014 / -1700 확인됨). 그래서 목적지 캘린더에 동일 속성으로 새로 만들고 원본을 지우는 방식으로 동작 — **uid가 바뀐다.**
+`move_event.js` note: Calendar.app's standard `move` command isn't actually implemented for the event class and always errors (confirmed: -10014 / -1700). So it works around this by recreating the event with the same properties in the destination calendar and deleting the original — **the uid changes.**
 
-날짜 인자는 ISO8601 (`2026-06-26T15:00:00+09:00`) 형식.
+Date arguments use ISO8601 format (e.g. `2026-06-26T15:00:00+09:00`).
 
-## 6. 사전 준비 (1회성)
+## 6. One-time setup
 
-최초 실행 시 macOS가 터미널/Claude Code의 Calendar·Reminders 접근 권한을 묻는다. 시스템 설정 > 개인정보 보호 및 보안 > 캘린더/미리 알림에서 허용 필요.
+The first time a script runs, macOS will prompt for Calendar/Reminders access for Terminal/Claude Code. This must be allowed for anything to work (System Settings > Privacy & Security > Calendars / Reminders).
 
 ## 7. `mapping/category_map.json`
 
-키워드 → 캘린더/리스트 이름 힌트 테이블. 사용자가 직접 편집 가능. 형식은 `mapping/category_map.json` 참고.
+A keyword → calendar/list name hint table. Users can edit it directly. See `mapping/category_map.json` for the format.
 
-## 8. 알려진 한계: 캘린더를 특정 계정(iCloud 등)으로 지정/이동 불가
+## 8. Known limitation: can't assign/move a calendar to a specific account (e.g. iCloud)
 
-Calendar.app의 AppleScript/JXA 딕셔너리에는 **account(계정) 클래스/속성이 없다** (Reminders.app과 달리). 그래서 `create_event.js`/임시 캘린더 생성 코드로 새 캘린더를 만들면 항상 기본 위치(보통 로컬 "On My Mac")에 생기고, 스크립트로 "이 캘린더를 iCloud 계정에 넣어라" 지정할 방법이 없다. GUI 메뉴 자동화(System Events)로 우회하는 것도 가능은 하지만 Accessibility 권한(손쉬운 사용)이 추가로 필요하고 메뉴 텍스트/macOS 버전에 취약해서 권장하지 않음.
+Calendar.app's AppleScript/JXA dictionary has **no account class/property** (unlike Reminders.app). So any new calendar created via `create_event.js` or ad-hoc calendar-creation code always lands in the default location (usually local "On My Mac"), and there's no way to script "put this calendar under the iCloud account." GUI menu automation (System Events) could work around this, but it needs the Accessibility permission on top of everything else and is fragile across menu text/macOS versions — not recommended.
 
-**사용자가 "이 캘린더 iCloud로 옮겨줘" 같은 요청을 하면**, 이렇게 안내할 것:
-1. 사용자가 Calendar.app 사이드바에서 원하는 계정(예: iCloud) 섹션의 "+"로 같은 이름의 새 캘린더를 직접 만들게 한다.
-2. 그 다음 `move_event.js`로 기존 캘린더의 이벤트들을 새 캘린더로 옮긴다 (이름만 맞으면 계정 무관하게 동작).
-3. 빈 채로 남은 기존(로컬) 캘린더는 `delete` 명령으로 정리한다(필요하면 — 현재 `delete_event.js`만 있고 캘린더 자체를 지우는 스크립트는 없음, 필요 시 같은 패턴으로 추가).
+**If the user asks something like "move this calendar to iCloud"**, guide them through this instead:
+1. Have the user create a new calendar with the same name directly in Calendar.app's sidebar, under the desired account section (e.g. iCloud) — via the "+" button.
+2. Then use `move_event.js` to move the existing calendar's events into the new one (it only needs the name to match — the account doesn't matter to the script).
+3. Clean up the now-empty original (local) calendar with a delete command if needed (there's currently only `delete_event.js`, not a script that deletes a calendar itself — add one using the same pattern if needed).
